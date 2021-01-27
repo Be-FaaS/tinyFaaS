@@ -11,17 +11,34 @@ import urllib
 import sys
 import shutil
 import hashlib
+import os
+
 CONFIG_PORT = 8080
 endpoint_container = {}
 function_handlers = {}
 
-def create_endpoint(meta_container):
+def create_endpoint(meta_container, coapPort, httpPort, grpcPort):
     client = docker.from_env()
-    endpoint_image = client.images.build(path='./endpoint/', rm=True)[0]
+    endpoint_image = client.images.build(path='./reverse-proxy/', rm=True)[0]
 
+    # remove old endpoint-net networks
+    for n in client.networks.list(names=['endpoint-net']):
+        n.remove()
+    
     endpoint_network = client.networks.create('endpoint-net', driver='bridge')
 
-    endpoint_container['container'] = client.containers.run(endpoint_image, network=endpoint_network.name, ports={'5683/tcp': 5683}, detach=True)
+    ports = {}
+    if coapPort > 0:
+        ports['6000/udp'] = coapPort
+    
+    if httpPort > 0:
+        ports['7000/tcp'] = httpPort
+    
+    if grpcPort > 0:
+        ports['8000/tcp'] = grpcPort
+    
+
+    endpoint_container['container'] = client.containers.run(endpoint_image, network=endpoint_network.name, ports=ports, detach=True, name="tinyfaas-reverse-proxy", ulimits=[docker.types.Ulimit(name='nofile', soft=1048576, hard=1048576)])
     # getting IP address of the handler container by inspecting the network and converting CIDR to IPv4 address notation (very dirtily, removing the last 3 chars -> i.e. '/20', so let's hope we don't have a /8 subnet mask)
     endpoint_container['ipaddr'] = docker.APIClient().inspect_network(endpoint_network.id)['Containers'][endpoint_container['container'].id]['IPv4Address'][:-3]
 
@@ -69,6 +86,7 @@ class FunctionHandler():
         data = json.dumps(function_handler).encode('ascii')
 
         urllib.request.urlopen(url='http://' + endpoint_container['ipaddr'] + ':80', data=data)
+        
     def destroy(self):
         function_handler = {
             "function_resource": self.function_resource,
@@ -123,8 +141,7 @@ class UploadHandler(tornado.web.RequestHandler):
             if function_name in function_handlers:
                 function_handlers[function_name].destroy()
 
-            function_handlers[function_name] = FunctionHandler(function_name, function_resource, 
-            function_path, function_entry, function_threads, environment)
+            function_handlers[function_name] = FunctionHandler(function_name, function_resource, function_path, function_entry, function_threads, environment)
             function_handlers[function_name].zip_hash = hashlib.sha256(function_zip).hexdigest()
 
         except Exception as e:
@@ -178,20 +195,28 @@ class LogsHandler(tornado.web.RequestHandler):
 
 
 def main(args):
-    # read config data
-    # exactly one argument should be provided: meta_container
+    
+    # default coap port is 5683
+    coapPort = int(os.getenv('COAP_PORT', "5683"))
+
+    # http port
+    httpPort = int(os.getenv('HTTP_PORT', "80"))
+
+    # grpc port
+    grpcPort = int(os.getenv('GRPC_PORT', "8000"))
+
     if len(args) != 2:
-        raise ValueError('Too many or too little arguments provided:\n' + json.dumps(args))
+        raise ValueError('Too many or too little arguments provided:\n' + json.dumps(args) + '\nUsage: management-service.py [tinyfaas-mgmt container name] <endpoint port>')
 
     meta_container = args[1]
 
     try:
       docker.from_env().containers.get(meta_container)
     except:
-      raise ValueError('Provided container name does not match a running container')
+      raise ValueError('Provided container name does not match a running container' + '\nUsage: management-service.py [tinyfaas-mgmt container name] <endpoint port>')
 
     # create endpoint
-    create_endpoint(meta_container)
+    create_endpoint(meta_container, coapPort, httpPort, grpcPort)
 
     # accept incoming configuration requests and create handlers based on that
     app = tornado.web.Application([
