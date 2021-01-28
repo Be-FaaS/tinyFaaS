@@ -1,10 +1,8 @@
-FROM golang:alpine as golang
+FROM golang as golang
 
 WORKDIR /go/src/app
 COPY . .
 
-RUN apk update
-RUN apk add --no-cache git
 RUN go get -d -v ./...
 RUN CGO_ENABLED=0 go install -v ./...
 
