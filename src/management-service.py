@@ -73,7 +73,7 @@ class FunctionHandler():
         self.this_containers = list([None]*self.thread_count)
 
         for i in range(0, self.thread_count):
-            self.this_containers[i] = self.client.containers.run(self.this_image, environment=environment, network=self.this_network.name, detach=True)
+            self.this_containers[i] = self.client.containers.run(self.this_image, environment=environment, network=self.this_network.name, detach=True, ulimits=[docker.types.Ulimit(name='nofile', soft=1048576, hard=1048576)])
             # getting IP address of the handler container by inspecting the network and converting CIDR to IPv4 address notation (very dirtily, removing the last 3 chars -> i.e. '/20', so let's hope we don't have a /8 subnet mask)
             self.this_handler_ips[i] = docker.APIClient().inspect_network(self.this_network.id)['Containers'][self.this_containers[i].id]['IPv4Address'][:-3]
 
