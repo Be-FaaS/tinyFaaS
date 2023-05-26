@@ -1,5 +1,5 @@
 #https://nodejs.org/en/docs/guides/nodejs-docker-webapp/
-FROM node:10
+FROM node:18
 
 EXPOSE 8000
 
